@@ -1,0 +1,14 @@
+seed: 42
+start_date: 2022-01-01
+n_days: 1095
+segments: [salaried, freelancer, small_business]
+noise_scale: 0.08
+drift:
+  clean_baseline_days: 183
+  abrupt_events_per_segment: 1
+  gradual_events_per_segment: 1
+  volatility_events_per_segment: 1
+anomalies:
+  target_rate: 0.015
+  magnitude_min: 1.5
+  magnitude_max: 6.0
