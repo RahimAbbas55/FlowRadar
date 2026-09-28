@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.tfstate
+*.tfstate.*.backup
+.terraform/
+data/
+mlruns/
+.ipynb_checkpoints/
+.DS_Store
+.pytest_cache/
+*.egg-info/
