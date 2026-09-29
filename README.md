@@ -18,17 +18,17 @@ Cash flow forecasting and anomaly detection with a full MLOps lifecycle. Predict
 
 ## Status
 
-**Phase 1 (synthetic data) in progress.** The seeded base signal generator is built and tested for all three account segments (salaried, freelancer, small business). Drift injection, anomaly injection, forecasting models, and the MLOps layer are not yet built — see the roadmap below.
+**Phase 1 (synthetic data generator) complete.** Seeded, deterministic generation of base signal, drift injection, and anomaly injection with ground-truth labels for all three account segments. Forecasting models, anomaly detection evaluation, and the MLOps layer are not yet built — see the roadmap below.
 
 ## Why synthetic data
 
-Real transaction data is private, and injecting controlled drift and anomalies is the only reliable way to prove the monitoring and detection actually work. No real-world forecasting accuracy is claimed anywhere in this repo — the generator's own limitations are stated plainly in [Known limitations](#known-limitations).
+Real transaction data is private, and injecting controlled drift and anomalies is the only reliable way to prove the monitoring and detection actually work. No real-world forecasting accuracy is claimed anywhere in this repo — known simplifications are listed in [Known limitations](#known-limitations).
 
 ## Roadmap
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1. Data | Synthetic generator, drift and anomaly injection, validation | 🟡 base series done, drift + anomalies pending |
+| 1. Data | Synthetic generator, drift and anomaly injection, ground-truth labels | ✅ complete |
 | 2. Forecasting | Baselines, LightGBM, statsforecast, walk-forward backtest, conformal intervals | ⬜ not started |
 | 3. Anomaly detection | Residual detector, evaluation vs injected labels | ⬜ not started |
 | 4. MLOps core | MLflow, champion/challenger, Prefect retraining, Evidently drift monitors | ⬜ not started |
@@ -51,6 +51,17 @@ Real transaction data is private, and injecting controlled drift and anomalies i
 | Testing | pytest, dedicated leakage tests for time-series splits |
 | Phase 7 (gated) | Hugging Face transformers, PEFT (LoRA), TRL (SFT + DPO) |
 
+## What the generator produces
+
+`generate_dataset(config)` returns a dict with six keys:
+
+- **`series`** — the final daily inflow/outflow/net series per segment, with drift and anomalies applied
+- **`counterfactual`** — the same series after drift but before anomalies, so forecast error can be separated from detector error
+- **`anomaly_labels`** — one row per injected anomaly: segment, type, cause label, affected component, expected vs actual value
+- **`drift_events`** — one row per injected drift event: segment, type, component, start date, magnitude
+- **`calendar`** — the UK bank holiday table used to drive paydays and sales patterns
+- **`manifest`** — seed, config hash, generator version, and event counts, for full reproducibility
+
 ## Progress Log
 
 ### Phase 1, Stage 1 — Generator design
@@ -63,18 +74,39 @@ Designed the synthetic data contract before writing any code: 3 segments (salari
 
 ### Phase 1, Stage 3 — Base signal generator
 Built seeded, deterministic per-segment generators for all three account types, then a combined `generate_base_series()` entry point driven directly by `GeneratorConfig`.
-- **Salaried**: month-end payday inflow (rolled back to the prior working day via the calendar module), rent/bills clustered near the 1st, weekend-weighted discretionary spend, December uplift
-- **Freelancer**: Poisson-arrival, lognormal-sized invoice payments for realistic lumpy income, low steady daily spend, twice-yearly self-assessment tax outflows
-- **Small business**: weekday-driven sales near zero on bank holidays, weekly Monday supplier payments, month-end payroll, quarterly VAT settlements
+- **Salaried**: month-end payday inflow (rolled back to the prior working day), rent/bills near the 1st, weekend-weighted spend, December uplift
+- **Freelancer**: Poisson-arrival, lognormal-sized invoice payments, low steady daily spend, twice-yearly self-assessment tax outflows
+- **Small business**: weekday-driven sales near zero on bank holidays, weekly supplier payments, month-end payroll, quarterly VAT
 
 **Debugging notes**
-- A `pd.Timestamp` compared directly against a `datetime.date`-keyed holiday lookup never matches, even for the same calendar day — this silently made the small business generator treat Christmas as a normal working day. Fixed by converting to `.date()` before every calendar lookup, consistent with the other two segment generators.
-- `net = inflow - outflow` computed from two already-rounded columns can differ from a freshly rounded comparison by a trailing floating-point fraction. Fixed by rounding `net` itself at computation time rather than assuming rounded inputs produce a rounded difference.
+- A `pd.Timestamp` compared directly against a `datetime.date`-keyed holiday lookup never matches, even for the same calendar day — this silently made the small business generator treat Christmas as a normal working day. Fixed by converting to `.date()` before every calendar lookup.
+- `net = inflow - outflow` computed from two already-rounded columns can differ from a freshly rounded comparison by a trailing floating-point fraction. Fixed by rounding `net` itself at computation time.
+
+### Phase 1, Stage 4 — Drift injection
+Built three independent drift injectors plus a scheduler that places events per segment, respecting a configurable clean baseline window before any drift begins.
+- **Abrupt**: step-function multiplier on a component from a start date onward
+- **Gradual**: linear ramp from 1.0 to a target multiplier over a configurable duration, then holds
+- **Volatility**: added multiplicative noise from a start date onward, changing variance rather than mean
+- Scheduler assigns each event a segment, component, magnitude, and start date placed only in the post-baseline window, then applies all events sequentially so later drift compounds on earlier drift
+
+**Known simplification**: overlapping events on the same segment aren't explicitly prevented. With the default one event per type per segment, collision risk is low but non-zero over a ~2-year post-baseline window.
+
+### Phase 1, Stage 5 — Anomaly injection and dataset assembly
+Built all six anomaly types with ground-truth cause labels, a counterfactual snapshot, and the combined `generate_dataset()` entry point.
+- **Point events**: `large_unplanned_payment`, `duplicate_or_suspicious_debit` (outflow spikes), `payroll_delay`, `client_payment_delay` (inflow zeroed and shifted to a later real inflow day)
+- **Span events**: `business_closure` (inflow zeroed across a date range), `data_gap` (both components set to `NaN` across a range, distinct from zero-activity)
+- Segment eligibility enforced at the scheduling layer (e.g. `payroll_delay` only for salaried, `client_payment_delay` only for freelancer)
+- Counterfactual captured after drift but before anomalies, isolating anomaly effects specifically
+
+**Debugging notes**
+- Delay-based anomalies (`payroll_delay`, `client_payment_delay`) need a real inflow day to delay — a naively chosen random date often lands on a zero-inflow day, silently doing nothing. Fixed with a `_nearest_inflow_day` lookup that finds the closest actual inflow day on or after the target date before applying the delay.
+- Actual injected anomaly count can come in slightly under the configured `target_rate`, since eligible-segment and eligible-day skips reduce the effective count. The manifest's `n_anomaly_events` is the source of truth for evaluation, not the configured rate.
 
 ## Known limitations
 - All data is synthetic. No claim is made about real-world forecasting accuracy.
 - VAT settlement dates are simplified to a fixed day-of-month rather than exact HMRC quarter-specific rules.
-- Drift and anomaly injection (Phase 1, remainder) are not yet implemented — the current base series has no drift or anomalies.
+- Drift and anomaly events aren't checked for overlap on the same segment; low but non-zero collision risk with default settings.
+- Injected anomaly count can fall slightly under the configured target rate due to eligibility and inflow-day constraints.
 
 ## Setup
 
