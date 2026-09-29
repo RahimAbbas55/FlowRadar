@@ -62,3 +62,63 @@ def inject_duplicate_debit(
         "outflow", event_date, expected, actual,
     )
     return out, event
+
+# Invoice payment arrives late, same mechanism as payroll_delay but different cause label
+def inject_client_payment_delay(
+    df: pd.DataFrame, segment: str, event_date, delay_days: int
+) -> tuple[pd.DataFrame, AnomalyEvent]:
+    out = df.copy()
+    mask = _row_mask(out, segment, event_date)
+    expected = float(out.loc[mask, "inflow"].iloc[0])
+    out.loc[mask, "inflow"] = 0.0
+
+    delayed_date = pd.Timestamp(event_date) + pd.Timedelta(days=delay_days)
+    delayed_mask = (out["segment"] == segment) & (
+        pd.to_datetime(out["date"]) == delayed_date
+    )
+    if delayed_mask.any():
+        out.loc[delayed_mask, "inflow"] = out.loc[delayed_mask, "inflow"] + expected
+
+    out["net"] = (out["inflow"] - out["outflow"]).round(2)
+    event = AnomalyEvent(
+        segment, "client_payment_delay", "client_payment_delay",
+        "inflow", event_date, expected, 0.0,
+    )
+    return out, event
+
+# Zeroes inflow across a date range, simulating a trading closure
+def inject_business_closure(
+    df: pd.DataFrame, segment: str, start_date, end_date
+) -> tuple[pd.DataFrame, AnomalyEvent]:
+    out = df.copy()
+    dates = pd.to_datetime(out["date"])
+    mask = (
+        (out["segment"] == segment)
+        & (dates >= pd.Timestamp(start_date))
+        & (dates <= pd.Timestamp(end_date))
+    )
+    expected = float(out.loc[mask, "inflow"].mean()) if mask.any() else 0.0
+    out.loc[mask, "inflow"] = 0.0
+    out["net"] = (out["inflow"] - out["outflow"]).round(2)
+    event = AnomalyEvent(
+        segment, "business_closure", "business_closure", "inflow",
+        start_date, expected, 0.0, end_date=end_date,
+    )
+    return out, event
+
+# Sets both components to NaN across a range, simulating a genuine data outage
+def inject_data_gap(
+    df: pd.DataFrame, segment: str, start_date, end_date
+) -> tuple[pd.DataFrame, AnomalyEvent]:
+    out = df.copy()
+    dates = pd.to_datetime(out["date"])
+    mask = (
+        (out["segment"] == segment)
+        & (dates >= pd.Timestamp(start_date))
+        & (dates <= pd.Timestamp(end_date))
+    )
+    out.loc[mask, ["inflow", "outflow", "net"]] = float("nan")
+    event = AnomalyEvent(
+        segment, "data_gap", "data_gap", "both", start_date, 0.0, 0.0, end_date=end_date,
+    )
+    return out, event

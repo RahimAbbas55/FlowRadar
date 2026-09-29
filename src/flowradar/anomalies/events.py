@@ -10,3 +10,4 @@ class AnomalyEvent:
     event_date: date
     expected_value: float
     actual_value: float
+    end_date: date | None = None 
