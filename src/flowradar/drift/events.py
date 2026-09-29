@@ -9,3 +9,4 @@ class DriftEvent:
     component : str # inflow | outflow
     start_date : date
     magnitude : str # interpretation depends on drift_type
+    duration_days: int = 0 
