@@ -24,23 +24,22 @@ def test_fold_features_built_before_split_do_not_leak():
         second_last_net = fold.train["net"].iloc[-2]
         assert last_row["net_lag_1"] == second_last_net
 
-def test_building_features_on_full_series_then_splitting_is_the_leakage_bug():
-    # this test documents the WRONG order and proves it does leak, so the difference
-    # from the correct pattern above is concrete rather than theoretical
-    df = _sample_series()
-    full_features = build_features(df)  # features built on the whole series first
+def test_feature_values_are_unaffected_by_future_rows():
+    # the real leakage invariant: a feature computed for a given date must not change
+    # if every row after that date is deleted before the feature is computed
+    df = _sample_series(n_days=100)
+    full_features = build_features(df)
 
-    folds = make_walk_forward_folds(full_features, horizon=30, n_folds=1, step_days=30)
-    fold = folds[0]
+    check_date = pd.Timestamp("2024-02-15")
+    truncated = df[pd.to_datetime(df["date"]) <= check_date]
+    truncated_features = build_features(truncated)
 
-    first_test_row = fold.test.iloc[0]
-    # the bug: this lag value was computed using a training-set day, which is fine,
-    # but roll_mean features computed this way can include values from AFTER the
-    # train cutoff if build_features was run on full data — this assertion fails if so
-    train_dates = set(pd.to_datetime(fold.train["date"]))
-    test_dates = set(pd.to_datetime(fold.test["date"]))
-    # explicitly confirm the two date sets don't overlap, as a precondition for the real check
-    assert train_dates.isdisjoint(test_dates)
+    full_row = full_features[pd.to_datetime(full_features["date"]) == check_date].iloc[0]
+    truncated_row = truncated_features[pd.to_datetime(truncated_features["date"]) == check_date].iloc[0]
+
+    feature_cols = [c for c in full_features.columns if "_lag_" in c or "_roll_" in c]
+    for col in feature_cols:
+        assert full_row[col] == truncated_row[col] or (pd.isna(full_row[col]) and pd.isna(truncated_row[col]))
 
 def test_rolling_mean_in_fold_uses_only_train_history():
     df = _sample_series()
