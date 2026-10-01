@@ -38,3 +38,13 @@ def make_walk_forward_folds(
         folds.append(Fold(fold_id=i, train=train, test=test))
 
     return folds
+
+def split_calibration(train: pd.DataFrame, calib_days: int = 30) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # carves the most recent calib_days off the end of train for conformal calibration,
+    # leaving fit_train strictly before it so the model never sees calibration data during fitting
+    dates = sorted(pd.to_datetime(train["date"]).unique())
+    cutoff = dates[-calib_days]
+    dcol = pd.to_datetime(train["date"])
+    fit_train = train[dcol < cutoff].copy()
+    calibration = train[dcol >= cutoff].copy()
+    return fit_train, calibration

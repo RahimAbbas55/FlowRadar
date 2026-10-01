@@ -52,7 +52,13 @@ def lightgbm_predict(
     )
     booster = lgb.train(final_params, train_set, num_boost_round=num_boost_round)
 
-    preds = booster.predict(test_feat[feature_cols + ["segment"]])
-    result = pd.Series(preds, index=test_feat.index)
-    result.index = test.index[: len(result)]
-    return result
+    preds_df = test_feat[["segment", "date"]].copy()
+    preds_df["date"] = pd.to_datetime(preds_df["date"])
+    preds_df["prediction"] = booster.predict(test_feat[feature_cols + ["segment"]])
+
+    # explicit (segment, date) merge, not positional alignment — safe regardless of
+    # row order or segment count, matching the fix applied to seasonal_naive_predict
+    test_lookup = test[["segment", "date"]].copy()
+    test_lookup["date"] = pd.to_datetime(test_lookup["date"])
+    merged = test_lookup.merge(preds_df, on=["segment", "date"], how="left")
+    return pd.Series(merged["prediction"].values, index=test.index)
