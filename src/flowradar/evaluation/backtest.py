@@ -26,7 +26,7 @@ def make_walk_forward_folds(
     folds = []
     for i in range(n_folds):
         test_start_idx = first_test_start_idx + i * step_days
-        test_end_idx = test_start_idx + horizon
+        test_end_idx = test_start_idx + horizon - 1
 
         train_cutoff = dates[test_start_idx - 1]
         test_start = dates[test_start_idx]
