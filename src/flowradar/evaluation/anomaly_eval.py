@@ -46,3 +46,25 @@ def evaluate_detector(
         "precision": precision,
         "recall": recall,
     }
+
+'''
+    Scores precision/recall separately for each anomaly type, since detection
+    difficulty varies a lot by mechanism (a spike vs a missing-data gap)
+'''
+def evaluate_by_type(detected: pd.DataFrame, anomaly_labels: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for anomaly_type in anomaly_labels["anomaly_type"].unique():
+        type_labels = anomaly_labels[anomaly_labels["anomaly_type"] == anomaly_type]
+        result = evaluate_detector(detected, type_labels)
+        rows.append({"anomaly_type": anomaly_type, **result})
+    return pd.DataFrame(rows).sort_values("anomaly_type").reset_index(drop=True)
+
+'''
+    Combines overall and per-type evaluation into one report, the single entry
+    point for Phase 3's results rather than requiring both calls separately
+'''
+def build_detection_report(detected: pd.DataFrame, anomaly_labels: pd.DataFrame) -> dict:
+    return {
+        "overall": evaluate_detector(detected, anomaly_labels),
+        "by_type": evaluate_by_type(detected, anomaly_labels),
+    }
