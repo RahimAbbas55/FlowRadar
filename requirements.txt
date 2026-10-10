@@ -7,3 +7,4 @@ pytest
 lightgbm
 statsforecast
 mlflow
+evidently>=0.7
