@@ -5,6 +5,7 @@ from flowradar.features.pipeline import build_features
 from flowradar.tracking.mlflow_tracking import _ensure_tracking_uri_set
 _MODEL_NAME = "flowradar-lightgbm"
 _EXPERIMENT_NAME = "flowradar-model-comparison"
+CHAMPION_ALIAS = "champion"
 
 '''
     Fits a LightGBM booster on the full provided training set and registers it
@@ -46,10 +47,14 @@ def train_and_register_model(
     latest = max(versions, key=lambda v: int(v.version))
     return latest
 
-# loads a specific version, or the highest existing version number if "latest"
+# loads a specific version, the highest version number for "latest",
+# or whichever version currently holds the champion alias for "champion"
 def load_registered_model(version: int | str = "latest"):
     _ensure_tracking_uri_set()
     client = mlflow.MlflowClient()
+
+    if version == "champion":
+        return mlflow.lightgbm.load_model(f"models:/{_MODEL_NAME}@{CHAMPION_ALIAS}")
 
     if version == "latest":
         versions = client.search_model_versions(f"name='{_MODEL_NAME}'")
