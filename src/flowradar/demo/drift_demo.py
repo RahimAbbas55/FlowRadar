@@ -1,7 +1,5 @@
-from datetime import timedelta
-
 import pandas as pd
-
+from datetime import timedelta
 from flowradar.config import GeneratorConfig
 from flowradar.drift.events import DriftEvent
 from flowradar.drift.scheduler import apply_drift_events
@@ -11,17 +9,14 @@ from flowradar.segments.base_series import generate_base_series
 from flowradar.tracking.promotion import promote_if_better
 from flowradar.tracking.registry import load_registered_model, train_and_register_model
 
-
 def default_demo_config() -> GeneratorConfig:
     # two segments: small_business gets the drift, salaried is the untouched control
     return GeneratorConfig(n_days=800, segments=["salaried", "small_business"])
-
 
 def default_demo_events(config: GeneratorConfig, shift_day: int = 700) -> list[DriftEvent]:
     # small business loses its main customer: inflow drops to 50% from shift_day onward
     start = config.start_date + timedelta(days=shift_day)
     return [DriftEvent("small_business", "abrupt", "inflow", start, 0.5)]
-
 
 def run_drift_demo(
     config: GeneratorConfig,
@@ -31,7 +26,7 @@ def run_drift_demo(
     holdout_days: int = 30,
     current_days: int = 56,
     reference_days: int = 182,
-    mode: str = "both",
+    mode: str = "any",
     num_boost_round: int = 100,
 ) -> dict:
     # runs the full loop on a drifted synthetic series: train an initial champion, then
@@ -77,7 +72,6 @@ def run_drift_demo(
 
     return {"timeline": timeline, "series": series, "events": events}
 
-
 def main() -> None:
     config = default_demo_config()
     result = run_drift_demo(config, default_demo_events(config))
@@ -86,7 +80,6 @@ def main() -> None:
             f"{step['as_of_date'].date()}  retrained={step['retrained']}  "
             f"promoted={step.get('promoted')}  reasons={step['decision']['reasons']}"
         )
-
 
 if __name__ == "__main__":
     main()
