@@ -1,17 +1,20 @@
+import numpy as np
 import pandas as pd
 
-
 def seasonal_naive_predict(train: pd.DataFrame, test: pd.DataFrame, season_length: int = 7) -> pd.Series:
-    # predicts each test day's net as the value exactly season_length days earlier,
-    # per segment. Aligned back to test via an explicit (segment, date) merge, not
-    # positional alignment, so this is safe regardless of row order or segment count
-    combined = pd.concat([train, test]).sort_values(["segment", "date"]).copy()
-    combined["date"] = pd.to_datetime(combined["date"])
-    combined["prediction"] = combined.groupby("segment")["net"].shift(season_length)
+    # horizon-safe: forecasts are made at the training cutoff T. For a target date d,
+    # uses the value from the most recent same-weekday date at or before T, which is
+    # d - season_length * ceil((d - T) / season_length). Never reads test actuals
+    train = train[["segment", "date", "net"]].copy()
+    train["date"] = pd.to_datetime(train["date"])
+    cutoff = train["date"].max()
 
-    test_lookup = test[["segment", "date"]].copy()
-    test_lookup["date"] = pd.to_datetime(test_lookup["date"])
-    merged = test_lookup.merge(
-        combined[["segment", "date", "prediction"]], on=["segment", "date"], how="left"
-    )
+    lookup = test[["segment", "date"]].copy()
+    lookup["date"] = pd.to_datetime(lookup["date"])
+    days_ahead = (lookup["date"] - cutoff).dt.days
+    steps = np.ceil(days_ahead / season_length).clip(lower=1)
+    lookup["source_date"] = lookup["date"] - pd.to_timedelta(steps * season_length, unit="D")
+
+    known = train.rename(columns={"date": "source_date", "net": "prediction"})
+    merged = lookup.merge(known, on=["segment", "source_date"], how="left")
     return pd.Series(merged["prediction"].values, index=test.index)

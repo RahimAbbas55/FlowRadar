@@ -1,5 +1,7 @@
-import pandas as pd
 from functools import partial
+
+import pandas as pd
+
 from flowradar.evaluation.backtest import make_walk_forward_folds, split_calibration
 from flowradar.evaluation.conformal import conformal_interval, conformal_quantile
 from flowradar.evaluation.metrics import interval_coverage, mase, mean_interval_width, smape
@@ -7,30 +9,44 @@ from flowradar.models.lightgbm_model import lightgbm_predict
 from flowradar.models.seasonal_naive import seasonal_naive_predict
 from flowradar.models.statsforecast_model import statsforecast_predict
 
-# default model set run by the comparison, each matching the shared (train, test) -> predictions contract
-_MODELS = {
-    "seasonal_naive": seasonal_naive_predict,
-    "lightgbm": lightgbm_predict,
-    "ets": partial(statsforecast_predict, model_name="ets"),
-    "arima": partial(statsforecast_predict, model_name="arima"),
-}
 
-def _score_fold(predict_fn, fit_train: pd.DataFrame, calibration: pd.DataFrame, test: pd.DataFrame, alpha: float):
-    # calibrates on the held-out calibration slice, then scores point + interval predictions on test
+def _default_models(horizon: int) -> dict:
+    # every model matches the (train, test) -> predictions contract
+    return {
+        "seasonal_naive": seasonal_naive_predict,
+        "lightgbm": partial(lightgbm_predict, horizon=horizon),
+        "ets": partial(statsforecast_predict, model_name="ets"),
+        "arima": partial(statsforecast_predict, model_name="arima"),
+    }
+
+
+def _score_fold(
+    predict_fn,
+    fit_train: pd.DataFrame,
+    calibration: pd.DataFrame,
+    full_train: pd.DataFrame,
+    test: pd.DataFrame,
+    alpha: float,
+):
+    # calibration residuals come from forecasting the calibration slice from fit_train
+    # (1..calib_days ahead). Test predictions are made from full_train, so they are also
+    # 1..horizon days ahead and the interval is calibrated for the horizon it is used at
     calib_preds = predict_fn(fit_train, calibration)
     residuals = calibration["net"].reset_index(drop=True) - calib_preds.reset_index(drop=True)
     q = conformal_quantile(residuals, alpha=alpha)
 
-    test_preds = predict_fn(fit_train, test)
+    test_preds = predict_fn(full_train, test)
     lower, upper = conformal_interval(test_preds, q)
 
     actual = test["net"].reset_index(drop=True)
+    preds = test_preds.reset_index(drop=True)
     return {
-        "mase": mase(actual, test_preds.reset_index(drop=True), fit_train["net"]),
-        "smape": smape(actual, test_preds.reset_index(drop=True)),
+        "mase": mase(actual, preds, full_train["net"]),
+        "smape": smape(actual, preds),
         "interval_coverage": interval_coverage(actual, lower.reset_index(drop=True), upper.reset_index(drop=True)),
         "mean_interval_width": mean_interval_width(lower.reset_index(drop=True), upper.reset_index(drop=True)),
     }
+
 
 def run_model_comparison(
     df: pd.DataFrame,
@@ -41,16 +57,19 @@ def run_model_comparison(
     alpha: float = 0.1,
     models: dict | None = None,
 ) -> pd.DataFrame:
-    # runs every model through every fold, returning one row per (model, fold) so
-    # variance across folds stays visible rather than hidden behind an average
-    model_fns = models or _MODELS
+    # runs every model through every fold, one row per (model, fold) so variance
+    # across folds stays visible
+    if calib_days > horizon:
+        raise ValueError("calib_days must not exceed horizon, or calibration would use longer horizons than the test")
+
+    model_fns = models or _default_models(horizon)
     folds = make_walk_forward_folds(df, horizon=horizon, n_folds=n_folds, step_days=step_days)
 
     rows = []
     for fold in folds:
         fit_train, calibration = split_calibration(fold.train, calib_days=calib_days)
         for model_name, predict_fn in model_fns.items():
-            scores = _score_fold(predict_fn, fit_train, calibration, fold.test, alpha=alpha)
+            scores = _score_fold(predict_fn, fit_train, calibration, fold.train, fold.test, alpha=alpha)
             rows.append({"model": model_name, "fold_id": fold.fold_id, **scores})
 
     return pd.DataFrame(rows)
