@@ -52,7 +52,7 @@ class ForecastService:
         self.segments = sorted(self.history["segment"].unique())
         self.residuals = calibration_residuals(booster, self.history, self.train_end)
 
-    def interval_half_widths(self, alpha: float = 0.1) -> dict:
+    def _half_widths(self, residuals: pd.DataFrame, alpha: float) -> dict:
         # per-segment conformal half-widths. A segment needs min_calibration residuals and
         # enough for the finite-sample level to be valid at this alpha (n >= 1/alpha - 1),
         # otherwise its width is NaN rather than a silently weaker interval
@@ -61,9 +61,12 @@ class ForecastService:
         needed = max(self.min_calibration, math.ceil(1 / alpha) - 1)
         widths = {}
         for segment in self.segments:
-            res = self.residuals.loc[self.residuals["segment"] == segment, "residual"]
+            res = residuals.loc[residuals["segment"] == segment, "residual"]
             widths[segment] = conformal_quantile(res, alpha=alpha) if len(res) >= needed else float("nan")
         return widths
+
+    def interval_half_widths(self, alpha: float = 0.1) -> dict:
+        return self._half_widths(self.residuals, alpha)
 
     def forecast(self, alpha: float = 0.1) -> pd.DataFrame:
         # every feature of a future day is at least `horizon` days old, so the empty future
@@ -82,3 +85,42 @@ class ForecastService:
         columns = ["segment", "date", "horizon_days", "forecast", "lower", "upper",
                    "interval_calibrated", "model_version"]
         return out[columns].sort_values(["segment", "date"]).reset_index(drop=True)
+
+    def anomaly_flags(self, alpha: float = 0.01, days: int = 30) -> pd.DataFrame:
+        # judges the most recent `days` against a strict conformal interval calibrated only on
+        # out-of-sample days BEFORE that window. Calibrating on the days being judged would let
+        # the largest residual set the width, so no judged day could ever exceed it
+        if days < 1:
+            raise ValueError("days must be at least 1")
+        window_start = self.last_date - pd.Timedelta(days=days - 1)
+        widths = self._half_widths(self.residuals[self.residuals["date"] < window_start], alpha)
+
+        preds = predict_with_booster(self.booster, self.history)
+        actual = self.history[["segment", "date", "net"]]
+        rows = actual.merge(preds, on=["segment", "date"])
+        # days up to the training cutoff are in-sample for the booster, so they are never judged
+        rows = rows[(rows["date"] >= window_start) & (rows["date"] > self.train_end)].copy()
+        rows = rows.rename(columns={"net": "actual", "prediction": "forecast"})
+
+        half = rows["segment"].map(widths).astype(float)
+        rows["lower"] = rows["forecast"] - half
+        rows["upper"] = rows["forecast"] + half
+
+        above = (rows["actual"] > rows["upper"]).to_numpy()
+        below = (rows["actual"] < rows["lower"]).to_numpy()
+        status = np.select(
+            [
+                rows["actual"].isna().to_numpy(),
+                rows["forecast"].isna().to_numpy(),
+                half.isna().to_numpy(),
+                above | below,
+            ],
+            ["no_actual", "no_forecast", "not_calibrated", "anomaly"],
+            default="normal",
+        )
+        rows["status"] = status
+        outside = np.where(above, rows["actual"] - rows["upper"], rows["actual"] - rows["lower"])
+        rows["distance"] = np.where(status == "anomaly", outside, np.where(status == "normal", 0.0, np.nan))
+
+        columns = ["segment", "date", "actual", "forecast", "lower", "upper", "status", "distance"]
+        return rows[columns].sort_values(["segment", "date"]).reset_index(drop=True)

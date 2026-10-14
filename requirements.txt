@@ -9,3 +9,6 @@ statsforecast
 mlflow
 evidently>=0.7
 prefect>=3
+fastapi
+uvicorn
+httpx
