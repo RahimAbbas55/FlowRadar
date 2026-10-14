@@ -47,7 +47,13 @@ def train_and_register_model(
 
     client = mlflow.MlflowClient()
     versions = client.search_model_versions(f"name='{_MODEL_NAME}'")
-    return max(versions, key=lambda v: int(v.version))
+    latest = max(versions, key=lambda v: int(v.version))
+    # records what the version was trained on, so serving can calibrate intervals on
+    # genuinely out-of-sample history after the training cutoff
+    train_end = pd.to_datetime(train["date"]).max().date().isoformat()
+    client.set_model_version_tag(_MODEL_NAME, str(latest.version), "train_end_date", train_end)
+    client.set_model_version_tag(_MODEL_NAME, str(latest.version), "horizon", str(horizon))
+    return client.get_model_version(_MODEL_NAME, str(latest.version))
 
 
 def load_registered_model(version: int | str = "latest"):
