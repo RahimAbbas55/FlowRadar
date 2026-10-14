@@ -13,15 +13,17 @@ def default_demo_config() -> GeneratorConfig:
     # two segments: small_business gets the drift, salaried is the untouched control
     return GeneratorConfig(n_days=800, segments=["salaried", "small_business"])
 
-def default_demo_events(config: GeneratorConfig, shift_day: int = 700) -> list[DriftEvent]:
-    # small business loses its main customer: inflow drops to 50% from shift_day onward
+def default_demo_events(config: GeneratorConfig, shift_day: int = 650) -> list[DriftEvent]:
+    # small business loses its main customer: inflow drops to 50% from shift_day onward.
+    # A direct 30-day model needs roughly 90 post-shift days before it has enough rows
+    # where both the target and its lag features are in the new regime
     start = config.start_date + timedelta(days=shift_day)
     return [DriftEvent("small_business", "abrupt", "inflow", start, 0.5)]
 
 def run_drift_demo(
     config: GeneratorConfig,
     events: list[DriftEvent],
-    checkpoints: tuple[int, ...] = (690, 800),
+    checkpoints: tuple[int, ...] = (640, 800),
     champion_days: int = 365,
     holdout_days: int = 30,
     current_days: int = 56,

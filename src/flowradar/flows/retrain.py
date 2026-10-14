@@ -1,11 +1,9 @@
 import pandas as pd
 from prefect import flow, task
-
 from flowradar.evaluation.holdout import score_on_holdout
 from flowradar.flows.retrain_decision import retrain_decision_flow
 from flowradar.tracking.promotion import get_champion_version, promote_if_better
 from flowradar.tracking.registry import load_registered_model, train_and_register_model
-
 
 @task(name="split-holdout")
 def split_holdout(series, holdout_days: int):
@@ -14,17 +12,14 @@ def split_holdout(series, holdout_days: int):
     cutoff = dates.max() - pd.Timedelta(days=holdout_days - 1)
     return series[dates < cutoff].copy(), series[dates >= cutoff].copy()
 
-
 @task(name="train-challenger")
-def train_challenger(fit_df, num_boost_round: int):
-    return train_and_register_model(fit_df, num_boost_round=num_boost_round)
-
+def train_challenger(fit_df, num_boost_round: int, horizon: int):
+    return train_and_register_model(fit_df, num_boost_round=num_boost_round, horizon=horizon)
 
 @task(name="score-challenger")
 def score_challenger(version_number: int, fit_df, holdout_df):
     booster = load_registered_model(version_number)
     return score_on_holdout(booster, fit_df, holdout_df)
-
 
 @task(name="score-champion")
 def score_champion(fit_df, holdout_df):
@@ -35,11 +30,9 @@ def score_champion(fit_df, holdout_df):
     booster = load_registered_model("champion")
     return int(champion.version), score_on_holdout(booster, fit_df, holdout_df)
 
-
 @task(name="promote-if-better")
 def promote(challenger, challenger_score, champion_score, min_improvement: float):
     return promote_if_better(challenger, challenger_score, champion_score, min_improvement)
-
 
 # series and prediction_log are DataFrames with no type hints, as in the decision flow
 @flow(name="retrain", log_prints=True)
@@ -55,7 +48,12 @@ def retrain_flow(
     drift_share_threshold: float = 0.5,
     error_ratio_threshold: float = 1.5,
     mode: str = "any",
+    horizon: int = 30,
 ) -> dict:
+    # a holdout longer than the horizon would let its own actuals leak into its features
+    if holdout_days > horizon:
+        raise ValueError(f"holdout_days ({holdout_days}) must not exceed horizon ({horizon})")
+
     decision = retrain_decision_flow(
         series,
         prediction_log,
@@ -71,7 +69,7 @@ def retrain_flow(
         return {"retrained": False, "decision": decision}
 
     fit_df, holdout_df = split_holdout(series, holdout_days)
-    challenger = train_challenger(fit_df, num_boost_round)
+    challenger = train_challenger(fit_df, num_boost_round, horizon)
     challenger_score = score_challenger(int(challenger.version), fit_df, holdout_df)
     champion_version, champion_score = score_champion(fit_df, holdout_df)
     outcome = promote(challenger, challenger_score, champion_score, min_improvement)

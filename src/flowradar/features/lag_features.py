@@ -1,10 +1,11 @@
 import pandas as pd
 
-# Adds lag and rolling-mean features per segment, never crossing segment boundaries
 def add_lag_features(
     df: pd.DataFrame, lags: list[int] = [1, 7, 14, 28], rolling_windows: list[int] = [7, 28]
 ) -> pd.DataFrame:
+    # adds lag and rolling-mean features per segment, never crossing segment boundaries
     out = df.sort_values(["segment", "date"]).copy()
+
     for col in ["net", "inflow", "outflow"]:
         grouped = out.groupby("segment")[col]
         for lag in lags:

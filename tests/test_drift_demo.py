@@ -18,7 +18,7 @@ def demo_result(tmp_path_factory):
 
 def test_pre_shift_checkpoint_does_not_retrain(demo_result):
     first = demo_result["timeline"][0]
-    assert first["as_of_day"] == 690
+    assert first["as_of_day"] == 640
     assert first["retrained"] is False
 
 def test_post_shift_checkpoint_retrains_and_promotes(demo_result):

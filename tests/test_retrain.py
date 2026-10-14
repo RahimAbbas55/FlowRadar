@@ -43,7 +43,7 @@ def test_no_retrain_on_stable_data(mlflow_store):
     assert int(get_champion_version().version) == 1
 
 def test_retrains_and_promotes_after_level_shift(mlflow_store):
-    series = _series(shift_start=380)
+    series = _series(shift_start=340)
     log = _champion_and_log(series)
     result = retrain_flow(series, log, holdout_days=30, num_boost_round=50, **_WINDOWS)
     assert result["decision"]["retrain"] is True

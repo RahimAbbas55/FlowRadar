@@ -1,28 +1,30 @@
 import mlflow
 import mlflow.lightgbm
 import pandas as pd
-from flowradar.features.pipeline import build_features
+
+from flowradar.features.horizon_features import build_horizon_features
 from flowradar.tracking.mlflow_tracking import _ensure_tracking_uri_set
+
 _MODEL_NAME = "flowradar-lightgbm"
 _EXPERIMENT_NAME = "flowradar-model-comparison"
 CHAMPION_ALIAS = "champion"
 
-'''
-    Fits a LightGBM booster on the full provided training set and registers it
-    as a new version under one fixed model name, so versions accumulate over time
-'''
+
 def train_and_register_model(
     train: pd.DataFrame,
     params: dict | None = None,
     num_boost_round: int = 200,
     seed: int = 42,
+    horizon: int = 30,
 ) -> mlflow.entities.model_registry.ModelVersion:
+    # fits a direct `horizon`-day-ahead LightGBM booster on the provided training set and
+    # registers it as a new version under one fixed model name
     import lightgbm as lgb
 
     _ensure_tracking_uri_set()
     mlflow.set_experiment(_EXPERIMENT_NAME)
 
-    features = build_features(train)
+    features = build_horizon_features(train, horizon=horizon)
     feature_cols = [
         c for c in features.columns if c not in {"date", "net", "inflow", "outflow", "segment"}
     ]
@@ -36,20 +38,21 @@ def train_and_register_model(
         features[feature_cols + ["segment"]], label=features["net"], categorical_feature=["segment"]
     )
 
-    with mlflow.start_run(run_name="register_lightgbm") as run:
+    with mlflow.start_run(run_name="register_lightgbm"):
         booster = lgb.train(final_params, train_set, num_boost_round=num_boost_round)
         mlflow.log_params(final_params)
         mlflow.log_param("num_boost_round", num_boost_round)
+        mlflow.log_param("horizon", horizon)
         mlflow.lightgbm.log_model(booster, artifact_path="model", registered_model_name=_MODEL_NAME)
 
     client = mlflow.MlflowClient()
     versions = client.search_model_versions(f"name='{_MODEL_NAME}'")
-    latest = max(versions, key=lambda v: int(v.version))
-    return latest
+    return max(versions, key=lambda v: int(v.version))
 
-# loads a specific version, the highest version number for "latest",
-# or whichever version currently holds the champion alias for "champion"
+
 def load_registered_model(version: int | str = "latest"):
+    # loads a specific version, the highest version number for "latest",
+    # or whichever version currently holds the champion alias for "champion"
     _ensure_tracking_uri_set()
     client = mlflow.MlflowClient()
 

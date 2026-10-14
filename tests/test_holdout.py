@@ -1,11 +1,9 @@
+import pytest
 import mlflow
 import numpy as np
 import pandas as pd
-import pytest
-
 from flowradar.evaluation.holdout import build_prediction_log, predict_with_booster, score_on_holdout
 from flowradar.tracking.registry import load_registered_model, train_and_register_model
-
 
 def _series(n_days=450, shift_start=None, shift=300.0, seed=5):
     # weekly-seasonal inflow with noise, optionally level-shifted from shift_start onward
@@ -20,25 +18,22 @@ def _series(n_days=450, shift_start=None, shift=300.0, seed=5):
         {"date": dates, "segment": "salaried", "inflow": inflow, "outflow": outflow, "net": inflow - outflow}
     )
 
-
 @pytest.fixture
 def mlflow_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mlflow.set_tracking_uri(f"sqlite:///{tmp_path}/mlflow.db")
 
-
 def _booster(train_df):
     train_and_register_model(train_df, num_boost_round=50)
     return load_registered_model("latest")
-
 
 def test_predictions_are_nan_during_warmup(mlflow_store):
     series = _series()
     booster = _booster(series.iloc[:180])
     preds = predict_with_booster(booster, series)
-    assert preds["prediction"].iloc[:28].isna().all()
-    assert preds["prediction"].iloc[28:].notna().all()
-
+    # the longest feature window (28 rows shifted by the 30-day horizon) needs 57 rows of history
+    assert preds["prediction"].iloc[:57].isna().all()
+    assert preds["prediction"].iloc[57:].notna().all()
 
 def test_prediction_log_columns_and_start_date(mlflow_store):
     series = _series()
@@ -50,7 +45,6 @@ def test_prediction_log_columns_and_start_date(mlflow_store):
     assert len(log) == 270
     assert log["prediction"].notna().all()
 
-
 def test_score_on_holdout_is_finite_and_positive(mlflow_store):
     series = _series()
     booster = _booster(series.iloc[:180])
@@ -58,9 +52,8 @@ def test_score_on_holdout_is_finite_and_positive(mlflow_store):
     assert np.isfinite(score)
     assert score > 0
 
-
 def test_model_trained_on_new_regime_scores_better(mlflow_store):
-    series = _series(shift_start=380)
+    series = _series(shift_start=340)
     old_booster = _booster(series.iloc[:180])
     new_booster = _booster(series.iloc[:420])
     fit_df, holdout_df = series.iloc[:420], series.iloc[420:]
