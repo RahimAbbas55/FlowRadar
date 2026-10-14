@@ -29,7 +29,7 @@ def train_and_register_model(
         c for c in features.columns if c not in {"date", "net", "inflow", "outflow", "segment"}
     ]
     features["segment"] = features["segment"].astype("category")
-    features = features.dropna(subset=feature_cols)
+    features = features.dropna(subset=feature_cols + ["net"])
 
     default_params = {"objective": "regression", "metric": "mae", "verbosity": -1, "seed": seed}
     final_params = {**default_params, **(params or {})}

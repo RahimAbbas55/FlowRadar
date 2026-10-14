@@ -47,7 +47,7 @@ def lightgbm_predict(
     feature_cols = _feature_columns(features)
 
     # drop warm-up rows with no valid lag history rather than filling them with a false signal
-    train_feat = train_feat.dropna(subset=feature_cols)
+    train_feat = train_feat.dropna(subset=feature_cols + ["net"])
 
     default_params = {"objective": "regression", "metric": "mae", "verbosity": -1, "seed": seed}
     final_params = {**default_params, **(params or {})}

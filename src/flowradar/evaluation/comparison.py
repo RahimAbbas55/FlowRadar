@@ -1,14 +1,12 @@
-from functools import partial
-
+import numpy as np
 import pandas as pd
-
+from functools import partial
 from flowradar.evaluation.backtest import make_walk_forward_folds, split_calibration
 from flowradar.evaluation.conformal import conformal_interval, conformal_quantile
 from flowradar.evaluation.metrics import interval_coverage, mase, mean_interval_width, smape
 from flowradar.models.lightgbm_model import lightgbm_predict
 from flowradar.models.seasonal_naive import seasonal_naive_predict
 from flowradar.models.statsforecast_model import statsforecast_predict
-
 
 def _default_models(horizon: int) -> dict:
     # every model matches the (train, test) -> predictions contract
@@ -18,7 +16,6 @@ def _default_models(horizon: int) -> dict:
         "ets": partial(statsforecast_predict, model_name="ets"),
         "arima": partial(statsforecast_predict, model_name="arima"),
     }
-
 
 def _score_fold(
     predict_fn,
@@ -38,15 +35,34 @@ def _score_fold(
     test_preds = predict_fn(full_train, test)
     lower, upper = conformal_interval(test_preds, q)
 
-    actual = test["net"].reset_index(drop=True)
-    preds = test_preds.reset_index(drop=True)
-    return {
-        "mase": mase(actual, preds, full_train["net"]),
-        "smape": smape(actual, preds),
-        "interval_coverage": interval_coverage(actual, lower.reset_index(drop=True), upper.reset_index(drop=True)),
-        "mean_interval_width": mean_interval_width(lower.reset_index(drop=True), upper.reset_index(drop=True)),
-    }
+    # rows with a missing actual (data gap) or missing prediction are excluded, not scored
+    # as misses, and n_scored reports how many rows each score is based on
+    scored = pd.DataFrame(
+        {
+            "segment": test["segment"].values,
+            "actual": test["net"].values,
+            "prediction": test_preds.values,
+            "lower": lower.values,
+            "upper": upper.values,
+        }
+    ).dropna()
 
+    # MASE is computed per segment against that segment's own naive error, then averaged,
+    # so a large-scale segment cannot dominate and segments never share a diff
+    segment_scores = []
+    for segment, group in scored.groupby("segment"):
+        history = full_train.loc[full_train["segment"] == segment].sort_values("date")["net"]
+        score = mase(group["actual"], group["prediction"], history)
+        if pd.notna(score):
+            segment_scores.append(score)
+
+    return {
+        "mase": float(np.mean(segment_scores)) if segment_scores else float("nan"),
+        "smape": smape(scored["actual"], scored["prediction"]),
+        "interval_coverage": interval_coverage(scored["actual"], scored["lower"], scored["upper"]),
+        "mean_interval_width": mean_interval_width(scored["lower"], scored["upper"]),
+        "n_scored": len(scored),
+    }
 
 def run_model_comparison(
     df: pd.DataFrame,
