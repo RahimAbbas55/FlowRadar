@@ -36,7 +36,7 @@ def generate_dataset(config: GeneratorConfig) -> dict:
     manifest = {
         "seed": config.seed,
         "config_hash": config.config_hash(),
-        "generator_version": "0.1.0",
+        "generator_version": "0.2.0",
         "n_days": config.n_days,
         "segments": config.segments,
         "n_drift_events": len(drift_events),
