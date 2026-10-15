@@ -1,17 +1,14 @@
+import pytest
 import mlflow
 import numpy as np
 import pandas as pd
-import pytest
-
 from flowradar.evaluation.holdout import predict_with_booster
 from flowradar.serving.forecaster import ForecastService
 from flowradar.tracking.registry import load_registered_model, train_and_register_model
-
 TARGETS = ["net", "inflow", "outflow"]
 DATES = pd.date_range("2024-01-01", periods=400, freq="D")
 TRAIN_DAYS = 270
 HISTORY_DAYS = 370
-
 
 def _series(seed=7):
     # two segments with very different scale and noise, so per-segment intervals matter
@@ -27,18 +24,15 @@ def _series(seed=7):
         )
     return pd.concat(frames, ignore_index=True)
 
-
 def _rows(series, start, stop):
     # rows for day indices start..stop-1 (stop is exclusive and may equal len(DATES))
     d = pd.to_datetime(series["date"])
     return series[(d >= DATES[start]) & (d <= DATES[stop - 1])].reset_index(drop=True)
 
-
 @pytest.fixture
 def mlflow_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mlflow.set_tracking_uri(f"sqlite:///{tmp_path}/mlflow.db")
-
 
 @pytest.fixture
 def setup(mlflow_store):
@@ -47,10 +41,8 @@ def setup(mlflow_store):
     train_and_register_model(_rows(series, 0, TRAIN_DAYS), num_boost_round=50)
     return series, load_registered_model("latest"), _rows(series, 0, HISTORY_DAYS)
 
-
 def _service(booster, history, **kwargs):
     return ForecastService(booster, history, train_end=DATES[TRAIN_DAYS - 1], **kwargs)
-
 
 def test_residuals_cover_only_days_after_the_training_cutoff(setup):
     _, booster, history = setup
@@ -58,7 +50,6 @@ def test_residuals_cover_only_days_after_the_training_cutoff(setup):
     assert res["date"].min() > DATES[TRAIN_DAYS - 1]
     assert res["residual"].notna().all()
     assert (res.groupby("segment").size() == HISTORY_DAYS - TRAIN_DAYS).all()
-
 
 def test_forecast_covers_the_horizon_for_every_segment(setup):
     _, booster, history = setup
@@ -69,7 +60,6 @@ def test_forecast_covers_the_horizon_for_every_segment(setup):
     assert fc["forecast"].notna().all()
     assert ((fc["lower"] < fc["forecast"]) & (fc["forecast"] < fc["upper"])).all()
 
-
 def test_future_forecast_matches_the_backtest_prediction_for_the_same_dates(setup):
     series, booster, history = setup
     fc = _service(booster, history).forecast()
@@ -77,7 +67,6 @@ def test_future_forecast_matches_the_backtest_prediction_for_the_same_dates(setu
     merged = fc.merge(backtest, on=["segment", "date"])
     assert len(merged) == 60
     assert np.allclose(merged["forecast"], merged["prediction"])
-
 
 def test_changing_the_last_known_day_changes_only_the_far_end_of_the_forecast(setup):
     _, booster, history = setup
@@ -90,12 +79,10 @@ def test_changing_the_last_known_day_changes_only_the_far_end_of_the_forecast(se
     assert np.allclose(a.loc[near, "forecast"], b.loc[near, "forecast"])
     assert not np.allclose(a.loc[far, "forecast"], b.loc[far, "forecast"])
 
-
 def test_intervals_are_calibrated_per_segment(setup):
     _, booster, history = setup
     widths = _service(booster, history).interval_half_widths()
     assert widths["freelancer"] > 3 * widths["salaried"]
-
 
 def test_intervals_cover_most_of_the_true_future_values(setup):
     series, booster, history = setup
@@ -109,7 +96,6 @@ def test_intervals_cover_most_of_the_true_future_values(setup):
     assert covered.mean() >= 0.75
     assert covered.groupby(merged["segment"]).mean().min() >= 0.7
 
-
 def test_too_few_calibration_points_gives_no_interval(setup):
     _, booster, history = setup
     fc = _service(booster, history, min_calibration=500).forecast()
@@ -117,24 +103,26 @@ def test_too_few_calibration_points_gives_no_interval(setup):
     assert fc["lower"].isna().all() and fc["upper"].isna().all()
     assert fc["forecast"].notna().all()
 
-
 def test_stricter_alpha_needs_more_calibration_points(setup):
     _, booster, history = setup
     service = _service(booster, history)
     assert all(np.isfinite(v) for v in service.interval_half_widths(alpha=0.1).values())
     assert all(np.isnan(v) for v in service.interval_half_widths(alpha=0.001).values())
 
-
 def test_training_cutoff_at_or_after_the_history_end_is_rejected(setup):
     _, booster, history = setup
     with pytest.raises(ValueError):
         ForecastService(booster, history, train_end=DATES[HISTORY_DAYS - 1])
 
-
-def test_a_data_gap_in_the_input_window_gives_a_nan_forecast_not_a_guess(setup):
+def test_a_short_data_gap_is_bridged_but_a_long_one_gives_a_nan_forecast(setup):
     _, booster, history = setup
-    gapped = history.copy()
-    gapped.loc[pd.to_datetime(gapped["date"]) == DATES[HISTORY_DAYS - 1], TARGETS] = np.nan
-    fc = _service(booster, gapped).forecast()
+    one_day = history.copy()
+    one_day.loc[pd.to_datetime(one_day["date"]) == DATES[HISTORY_DAYS - 1], TARGETS] = np.nan
+    fc = _service(booster, one_day).forecast()
+    assert fc["forecast"].notna().all()  # a one-day gap is bridged with the last known value
+    long_gap = history.copy()
+    d = pd.to_datetime(long_gap["date"])
+    long_gap.loc[(d >= DATES[HISTORY_DAYS - 5]) & (d <= DATES[HISTORY_DAYS - 1]), TARGETS] = np.nan
+    fc = _service(booster, long_gap).forecast()
     assert fc.loc[fc["horizon_days"] == 30, "forecast"].isna().all()
     assert fc.loc[fc["horizon_days"] == 1, "forecast"].notna().all()

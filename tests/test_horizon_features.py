@@ -92,11 +92,14 @@ def test_lags_do_not_cross_segments():
     assert freelancer["net_lag_30"].iloc[:30].isna().all()
     assert freelancer["net_lag_30"].iloc[30] == freelancer["net"].iloc[0]
 
-def test_nan_propagates_through_a_data_gap():
+def test_a_short_data_gap_is_bridged_but_a_long_one_stays_missing():
     df = _frame()
-    df.loc[50, "net"] = np.nan
+    df.loc[50, TARGETS] = np.nan  # one missing day
+    df.loc[120:125, TARGETS] = np.nan  # six missing days, longer than the 3-day limit
     out = add_horizon_lag_features(df, horizon=30)
-    assert pd.isna(out.iloc[80]["net_lag_30"])
+    assert out.iloc[80]["net_lag_30"] == df.loc[49, "net"]
+    assert out.iloc[150]["net_lag_30"] == df.loc[119, "net"]  # row 120 is bridged with row 119
+    assert pd.isna(out.iloc[155]["net_lag_30"])  # row 125 is past the limit
 
 def test_invalid_horizon_raises():
     with pytest.raises(ValueError):
