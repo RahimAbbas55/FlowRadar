@@ -178,10 +178,17 @@ def per_seed_summary(table: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 def alpha_summary(table: pd.DataFrame) -> pd.DataFrame:
-    rows = [{"alpha": alpha, **_counts(group)} for alpha, group in table.groupby("alpha")]
-    columns = ["alpha", "precision", "recall", "recall_effective", "false_positive_rate",
-               "true_positives", "false_positives", "false_negatives"]
-    return pd.DataFrame(rows)[columns].sort_values("alpha", ascending=False).reset_index(drop=True)
+    # one row per (scale, alpha) when the table has a scale column, otherwise per alpha
+    keys = ["scale", "alpha"] if "scale" in table.columns else ["alpha"]
+    rows = []
+    for key, group in table.groupby(keys):
+        key = key if isinstance(key, tuple) else (key,)
+        rows.append({**dict(zip(keys, key)), **_counts(group)})
+    columns = keys + ["precision", "recall", "recall_effective", "false_positive_rate",
+                      "true_positives", "false_positives", "false_negatives"]
+    ascending = [True] * (len(keys) - 1) + [False]
+    return pd.DataFrame(rows)[columns].sort_values(keys, ascending=ascending).reset_index(drop=True)
+
 
 def by_type_summary(table: pd.DataFrame) -> pd.DataFrame:
     # event-level recall: an event is detected if any of its days was flagged. Events with no
@@ -238,24 +245,32 @@ def evaluate_seed(
     n_days: int = 1825,
     calibration_days: int = 825,
     num_boost_round: int = 200,
+    scales=("constant",),
 ) -> pd.DataFrame:
     # one drift-free dataset, one champion trained in a throwaway registry, and the judged-day
-    # table at each alpha. Drift is off so false alarms reflect the detector, not stale models
+    # table at each alpha and interval scale. Both scales share the champion, so the comparison
+    # is matched. Drift is off so false alarms reflect the detector, not stale models
     dataset = generate_dataset(GeneratorConfig(n_days=n_days, seed=seed, drift=_NO_DRIFT))
     history = dataset["series"]
     with isolated_registry():
         ensure_champion(history, calibration_days=calibration_days, num_boost_round=num_boost_round)
-        service = load_forecast_service(history)
-        tables = [
-            judged_day_table(service, dataset, alpha=alpha, days=days).assign(alpha=alpha, seed=seed)
-            for alpha in alphas
-        ]
+        base = load_forecast_service(history)
+        tables = []
+        for scale in scales:
+            service = base if base.interval_scale == scale else base.with_interval_scale(scale)
+            for alpha in alphas:
+                tables.append(
+                    judged_day_table(service, dataset, alpha=alpha, days=days).assign(
+                        alpha=alpha, seed=seed, scale=scale
+                    )
+                )
     return pd.concat(tables, ignore_index=True)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="multi-seed anomaly detector evaluation on drift-free data")
     parser.add_argument("--seeds", type=int, default=10)
     parser.add_argument("--alpha", type=float, default=0.05, help="alpha for the per-type and per-size tables")
+    parser.add_argument("--scales", nargs="+", default=["constant", "relative"], choices=["constant", "relative"])
     parser.add_argument("--out", default="results/detector_eval")
     args = parser.parse_args()
 
@@ -263,17 +278,21 @@ def main() -> None:
     frames = []
     for seed in range(1, args.seeds + 1):
         print(f"seed {seed} of {args.seeds}", flush=True)
-        frames.append(evaluate_seed(seed, alphas=alphas))
+        frames.append(evaluate_seed(seed, alphas=alphas, scales=tuple(args.scales)))
     table = pd.concat(frames, ignore_index=True)
     headline = table[table["alpha"] == args.alpha]
 
-    outputs = {
-        "alpha_sweep": alpha_summary(table),
-        "overall": pd.DataFrame([overall_summary(headline)]),
-        "per_seed": per_seed_summary(headline),
-        "by_type": by_type_summary(headline),
-        "by_size": by_size_summary(headline),
+    outputs = {"alpha_sweep": alpha_summary(table)}
+    builders = {
+        "overall": lambda t: pd.DataFrame([overall_summary(t)]),
+        "per_seed": per_seed_summary,
+        "by_type": by_type_summary,
+        "by_size": by_size_summary,
     }
+    for name, build in builders.items():
+        parts = [build(headline[headline["scale"] == scale]).assign(scale=scale) for scale in args.scales]
+        outputs[name] = pd.concat(parts, ignore_index=True)
+
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for name, frame in outputs.items():

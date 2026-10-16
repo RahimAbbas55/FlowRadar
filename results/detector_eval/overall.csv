@@ -1,0 +1,2 @@
+seeds,anomalous_days,effective_days,true_positives,false_positives,false_negatives,precision,recall,recall_effective,clean_days_judged,false_positive_rate,false_positive_rate_echo_exposed,false_positive_rate_unexposed,echo_exposed_share
+10,462,385,206,524,256,0.2821917808219178,0.4458874458874459,0.5298701298701298,15210,0.03445101906640368,0.035282651072124756,0.034027777777777775,0.33727810650887574
