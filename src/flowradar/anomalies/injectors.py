@@ -13,6 +13,26 @@ def _typical_outflow(df: pd.DataFrame, segment: str) -> float:
     values = values[values > 0]
     return float(values.median()) if len(values) else 0.0
 
+def _delay_inflow(df: pd.DataFrame, segment: str, event_date, delay_days: int):
+    # removes the inflow due on event_date and adds it to the day delay_days later. Returns the
+    # new frame, the amount moved, and the arrival date (None if it falls after the data ends)
+    out = df.copy()
+    mask = _row_mask(out, segment, event_date)
+    expected = float(out.loc[mask, "inflow"].iloc[0])
+    out.loc[mask, "inflow"] = 0.0
+
+    delayed_date = pd.Timestamp(event_date) + pd.Timedelta(days=delay_days)
+    delayed_mask = (out["segment"] == segment) & (
+        pd.to_datetime(out["date"]) == delayed_date
+    )
+    arrival = None
+    if delayed_mask.any():
+        out.loc[delayed_mask, "inflow"] = out.loc[delayed_mask, "inflow"] + expected
+        arrival = delayed_date.date()
+
+    out["net"] = (out["inflow"] - out["outflow"]).round(2)
+    return out, expected, arrival
+
 def inject_large_unplanned_payment(
     df: pd.DataFrame, segment: str, event_date, magnitude: float
 ) -> tuple[pd.DataFrame, AnomalyEvent]:
@@ -44,21 +64,10 @@ def inject_payroll_delay(
     df: pd.DataFrame, segment: str, event_date, delay_days: int
 ) -> tuple[pd.DataFrame, AnomalyEvent]:
     # zeroes the expected payday inflow and moves it to a later date
-    out = df.copy()
-    mask = _row_mask(out, segment, event_date)
-    expected = float(out.loc[mask, "inflow"].iloc[0])
-    out.loc[mask, "inflow"] = 0.0
-
-    delayed_date = pd.Timestamp(event_date) + pd.Timedelta(days=delay_days)
-    delayed_mask = (out["segment"] == segment) & (
-        pd.to_datetime(out["date"]) == delayed_date
-    )
-    if delayed_mask.any():
-        out.loc[delayed_mask, "inflow"] = out.loc[delayed_mask, "inflow"] + expected
-
-    out["net"] = (out["inflow"] - out["outflow"]).round(2)
+    out, expected, arrival = _delay_inflow(df, segment, event_date, delay_days)
     event = AnomalyEvent(
         segment, "payroll_delay", "payroll_delay", "inflow", event_date, expected, 0.0,
+        arrival_date=arrival,
     )
     return out, event
 
@@ -93,22 +102,10 @@ def inject_client_payment_delay(
     df: pd.DataFrame, segment: str, event_date, delay_days: int
 ) -> tuple[pd.DataFrame, AnomalyEvent]:
     # invoice payment arrives late, same mechanism as payroll_delay but different cause label
-    out = df.copy()
-    mask = _row_mask(out, segment, event_date)
-    expected = float(out.loc[mask, "inflow"].iloc[0])
-    out.loc[mask, "inflow"] = 0.0
-
-    delayed_date = pd.Timestamp(event_date) + pd.Timedelta(days=delay_days)
-    delayed_mask = (out["segment"] == segment) & (
-        pd.to_datetime(out["date"]) == delayed_date
-    )
-    if delayed_mask.any():
-        out.loc[delayed_mask, "inflow"] = out.loc[delayed_mask, "inflow"] + expected
-
-    out["net"] = (out["inflow"] - out["outflow"]).round(2)
+    out, expected, arrival = _delay_inflow(df, segment, event_date, delay_days)
     event = AnomalyEvent(
         segment, "client_payment_delay", "client_payment_delay",
-        "inflow", event_date, expected, 0.0,
+        "inflow", event_date, expected, 0.0, arrival_date=arrival,
     )
     return out, event
 

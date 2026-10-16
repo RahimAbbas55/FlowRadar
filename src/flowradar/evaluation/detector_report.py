@@ -10,14 +10,30 @@ from flowradar.serving.champion import ensure_champion, load_forecast_service
 from flowradar.serving.forecaster import ForecastService
 
 def clip_labels_to_window(labels: pd.DataFrame, start, end) -> pd.DataFrame:
-    # keeps only the part of each label that falls inside [start, end]. Labels entirely
-    # outside the window are dropped, spans that cross an edge are shortened
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
     out = labels.copy()
     out["event_date"] = pd.to_datetime(out["event_date"])
     out["end_date"] = pd.to_datetime(out["end_date"]).fillna(out["event_date"])
-    out["event_date"] = out["event_date"].clip(lower=pd.Timestamp(start))
-    out["end_date"] = out["end_date"].clip(upper=pd.Timestamp(end))
-    return out[out["event_date"] <= out["end_date"]].reset_index(drop=True)
+    if "arrival_date" in out.columns:
+        out["arrival_date"] = pd.to_datetime(out["arrival_date"])
+    else:
+        out["arrival_date"] = pd.NaT
+    arrival_inside = out["arrival_date"].between(start, end)
+
+    clipped = out.copy()
+    clipped["event_date"] = clipped["event_date"].clip(lower=start)
+    clipped["end_date"] = clipped["end_date"].clip(upper=end)
+    clipped["arrival_date"] = clipped["arrival_date"].where(arrival_inside)
+    span_inside = clipped["event_date"] <= clipped["end_date"]
+
+    parts = [clipped[span_inside]]
+    arrival_only = out[~span_inside & arrival_inside].copy()
+    if not arrival_only.empty:
+        arrival_only["event_date"] = arrival_only["arrival_date"]
+        arrival_only["end_date"] = arrival_only["arrival_date"]
+        arrival_only["arrival_date"] = pd.NaT
+        parts.append(arrival_only)
+    return pd.concat(parts, ignore_index=True)
 
 def _keys(df: pd.DataFrame) -> set:
     return set(zip(df["segment"], df["date"]))

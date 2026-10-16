@@ -1,27 +1,28 @@
 import pandas as pd
 
-'''
-    Expands span-based anomalies (business_closure, data_gap) into one row per
-    affected day, so point and span anomalies can be matched against detector
-    output on equal footing
-'''
 def expand_ground_truth_to_days(anomaly_labels: pd.DataFrame) -> pd.DataFrame:
+    # expands span-based anomalies (business_closure, data_gap) into one row per affected
+    # day, and adds the arrival day of delayed payments, so every anomalous day is a row
     rows = []
     for _, row in anomaly_labels.iterrows():
         start = pd.Timestamp(row["event_date"])
         end = pd.Timestamp(row["end_date"]) if pd.notna(row["end_date"]) else start
         for d in pd.date_range(start, end, freq="D"):
             rows.append({"segment": row["segment"], "date": d, "anomaly_type": row["anomaly_type"]})
+
+        arrival = row.get("arrival_date")
+        if arrival is not None and pd.notna(arrival):
+            rows.append(
+                {"segment": row["segment"], "date": pd.Timestamp(arrival), "anomaly_type": row["anomaly_type"]}
+            )
     return pd.DataFrame(rows)
 
-'''
-    Detected: columns [segment, date, is_anomaly] — detector's day-level flags
-    anomaly_labels: Phase 1's ground truth anomaly_labels table
-    returns overall precision, recall, and the supporting counts
-'''
 def evaluate_detector(
     detected: pd.DataFrame, anomaly_labels: pd.DataFrame
 ) -> dict:
+    # detected: columns [segment, date, is_anomaly] — detector's day-level flags
+    # anomaly_labels: Phase 1's ground truth anomaly_labels table
+    # returns overall precision, recall, and the supporting counts
     ground_truth_days = expand_ground_truth_to_days(anomaly_labels)
     ground_truth_keys = set(
         zip(ground_truth_days["segment"], pd.to_datetime(ground_truth_days["date"]))
@@ -47,11 +48,9 @@ def evaluate_detector(
         "recall": recall,
     }
 
-'''
-    Scores precision/recall separately for each anomaly type, since detection
-    difficulty varies a lot by mechanism (a spike vs a missing-data gap)
-'''
 def evaluate_by_type(detected: pd.DataFrame, anomaly_labels: pd.DataFrame) -> pd.DataFrame:
+    # scores precision/recall separately for each anomaly type, since detection
+    # difficulty varies a lot by mechanism (a spike vs a missing-data gap)
     rows = []
     for anomaly_type in anomaly_labels["anomaly_type"].unique():
         type_labels = anomaly_labels[anomaly_labels["anomaly_type"] == anomaly_type]
@@ -59,11 +58,9 @@ def evaluate_by_type(detected: pd.DataFrame, anomaly_labels: pd.DataFrame) -> pd
         rows.append({"anomaly_type": anomaly_type, **result})
     return pd.DataFrame(rows).sort_values("anomaly_type").reset_index(drop=True)
 
-'''
-    Combines overall and per-type evaluation into one report, the single entry
-    point for Phase 3's results rather than requiring both calls separately
-'''
 def build_detection_report(detected: pd.DataFrame, anomaly_labels: pd.DataFrame) -> dict:
+    # combines overall and per-type evaluation into one report, the single entry
+    # point for Phase 3's results rather than requiring both calls separately
     return {
         "overall": evaluate_detector(detected, anomaly_labels),
         "by_type": evaluate_by_type(detected, anomaly_labels),

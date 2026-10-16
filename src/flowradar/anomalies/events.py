@@ -3,6 +3,7 @@ from datetime import date
 
 @dataclass
 class AnomalyEvent:
+    # ground truth record for one injected anomaly, including the facts Phase 7 needs later
     segment: str
     anomaly_type: str
     cause_label: str
@@ -10,4 +11,5 @@ class AnomalyEvent:
     event_date: date
     expected_value: float
     actual_value: float
-    end_date: date | None = None 
+    end_date: date | None = None  # set for span-based anomalies like business_closure
+    arrival_date: date | None = None  # set for delays: the day the delayed money arrives

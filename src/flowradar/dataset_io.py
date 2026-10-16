@@ -5,7 +5,7 @@ from pathlib import Path
 _TABLES = {
     "series": ["date"],
     "counterfactual": ["date"],
-    "anomaly_labels": ["event_date", "end_date"],
+    "anomaly_labels": ["event_date", "end_date" , "arrival_date"],
     "drift_events": ["start_date"],
     "calendar": ["date"],
 }
