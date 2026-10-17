@@ -12,3 +12,4 @@ prefect>=3
 fastapi
 uvicorn
 httpx
+altair

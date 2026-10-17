@@ -1,0 +1,1 @@
+# marks dashboard as a package
