@@ -3,7 +3,7 @@ import mlflow
 import pandas as pd
 from flowradar.evaluation.comparison import run_model_comparison
 _EXPERIMENT_NAME = "flowradar-model-comparison"
-_METRICS = ["mase", "smape", "interval_coverage", "mean_interval_width"]
+_METRICS = ["mase", "smape", "interval_coverage", "min_segment_coverage", "mean_interval_width", "mean_width_mase"]
 
 def _ensure_tracking_uri_set() -> None:
     # defaults to a local sqlite store, since recent MLflow versions deprecated
@@ -50,7 +50,7 @@ def tracked_model_comparison(
             with mlflow.start_run(run_name=f"{row['model']}_fold{row['fold_id']}", nested=True):
                 mlflow.log_param("model", row["model"])
                 mlflow.log_param("fold_id", int(row["fold_id"]))
-                for metric in _METRICS + ["n_scored"]:
+                for metric in _METRICS + ["n_scored", "segments_scored"]:
                     if pd.notna(row[metric]):
                         mlflow.log_metric(metric, float(row[metric]))
 

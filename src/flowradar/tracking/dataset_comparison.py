@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 from pathlib import Path
 from flowradar.config import GeneratorConfig
@@ -33,25 +34,51 @@ def run_dataset_comparison(
     return pd.concat(frames, ignore_index=True)
 
 def summarize_comparison(results: pd.DataFrame) -> pd.DataFrame:
-    # one row per (data, model): means over folds, with MASE spread kept visible
-    summary = results.groupby(["data", "model"]).agg(
-        mase=("mase", "mean"),
-        mase_std=("mase", "std"),
-        smape=("smape", "mean"),
-        coverage=("interval_coverage", "mean"),
-        width=("mean_interval_width", "mean"),
-        n_folds=("fold_id", "nunique"),
-    )
+    # one row per (data, model): means over folds, with MASE spread kept visible.
+    # min_coverage is the mean over folds of the worst segment's coverage in each fold
+    named = {
+        "mase": ("mase", "mean"),
+        "mase_std": ("mase", "std"),
+        "smape": ("smape", "mean"),
+        "coverage": ("interval_coverage", "mean"),
+        "width": ("mean_interval_width", "mean"),
+        "n_folds": ("fold_id", "nunique"),
+    }
+    if "min_segment_coverage" in results.columns:
+        named["min_coverage"] = ("min_segment_coverage", "mean")
+    if "mean_width_mase" in results.columns:
+        named["width_mase"] = ("mean_width_mase", "mean")
+    summary = results.groupby(["data", "model"]).agg(**named)
     return summary.reset_index().sort_values(["data", "mase"]).reset_index(drop=True)
 
 def main() -> None:
-    # generates the default dataset, saves it under data/default (also used by the forecast
-    # service), reloads it from disk, and runs the full comparison
+    # uses the dataset saved under data/default (creating it if missing, also used by the
+    # forecast service) and runs the full comparison
+    parser = argparse.ArgumentParser(description="model comparison on the saved default dataset")
+    parser.add_argument("--folds", type=int, default=6)
+    parser.add_argument("--horizon", type=int, default=30)
+    parser.add_argument("--alpha", type=float, default=0.1)
+    args = parser.parse_args()
+
     data_dir = Path("data/default")
-    save_dataset(generate_dataset(GeneratorConfig()), data_dir)
-    results = run_dataset_comparison(load_dataset(data_dir))
-    print("nominal interval coverage is 90%")
-    print(summarize_comparison(results).to_string(index=False))
+    if not (data_dir / "manifest.json").exists():
+        save_dataset(generate_dataset(GeneratorConfig()), data_dir)
+    results = run_dataset_comparison(
+        load_dataset(data_dir),
+        horizon=args.horizon,
+        n_folds=args.folds,
+        step_days=args.horizon,
+        calib_days=args.horizon,
+        alpha=args.alpha,
+    )
+
+    out = Path("results")
+    out.mkdir(exist_ok=True)
+    results.to_csv(out / "model_comparison.csv", index=False)
+    summary = summarize_comparison(results)
+    summary.to_csv(out / "model_comparison_summary.csv", index=False)
+    print(f"nominal interval coverage is {1 - args.alpha:.0%}")
+    print(summary.round(3).to_string(index=False))
 
 if __name__ == "__main__":
     main()
