@@ -1,19 +1,17 @@
 import os
-
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
+from flowradar.serving.drift import drift_status
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-
 from flowradar.dataset_io import load_dataset
 from flowradar.serving.champion import ensure_champion, load_forecast_service
 from flowradar.serving.forecaster import ForecastService
 
-
 class _Model(BaseModel):
     # model_version would otherwise clash with pydantic's protected "model_" namespace
     model_config = ConfigDict(protected_namespaces=())
-
 
 class HealthResponse(_Model):
     status: str
@@ -22,7 +20,6 @@ class HealthResponse(_Model):
     train_end_date: str
     horizon: int
     segments: list[str]
-
 
 class ForecastPoint(_Model):
     segment: str
@@ -33,14 +30,12 @@ class ForecastPoint(_Model):
     upper: float | None
     interval_calibrated: bool
 
-
 class ForecastResponse(_Model):
     model_version: int | None
     as_of: str
     horizon: int
     alpha: float
     points: list[ForecastPoint]
-
 
 class AnomalyPoint(_Model):
     segment: str
@@ -52,7 +47,6 @@ class AnomalyPoint(_Model):
     status: str
     distance: float | None
 
-
 class AnomalyResponse(_Model):
     model_version: int | None
     as_of: str
@@ -61,6 +55,26 @@ class AnomalyResponse(_Model):
     flagged: int
     points: list[AnomalyPoint]
 
+class SegmentDrift(_Model):
+    segment: str
+    status: str
+    data_drift_assessed: bool
+    share_drifted: float | None
+    data_drift_detected: bool
+    error_assessed: bool
+    error_ratio: float | None
+    error_degraded: bool
+
+class DriftResponse(_Model):
+    as_of: str
+    model_version: int | None
+    train_end: str
+    current_days: int
+    reference_days: int
+    retrain: bool
+    mode: str
+    reasons: list[str]
+    segments: list[SegmentDrift]
 
 def _clean(value):
     # JSON cannot carry NaN or numpy scalars, so missing values become null
@@ -76,14 +90,11 @@ def _clean(value):
         return float(value) if np.isfinite(value) else None
     return value
 
-
 def _records(df: pd.DataFrame) -> list[dict]:
     return [{k: _clean(v) for k, v in row.items()} for row in df.to_dict("records")]
 
-
 def _day(ts: pd.Timestamp) -> str:
     return ts.strftime("%Y-%m-%d")
-
 
 def create_app(service: ForecastService) -> FastAPI:
     app = FastAPI(
@@ -146,9 +157,22 @@ def create_app(service: ForecastService) -> FastAPI:
             flagged=flagged,
             points=_records(flags),
         )
+        
+    @app.get("/drift", response_model=DriftResponse)
+    def drift(
+        current_days: int = Query(60, ge=14, le=120),
+        reference_days: int = Query(180, ge=60, le=400),
+        mode: str = Query("any", pattern="^(any|both)$"),
+    ):
+        status = drift_status(
+            service, current_days=current_days, reference_days=reference_days, mode=mode
+        )
+        status["as_of"] = _day(status["as_of"])
+        status["train_end"] = _day(status["train_end"])
+        status["segments"] = _records(pd.DataFrame(status["segments"]))
+        return DriftResponse(**status)
 
     return app
-
 
 def build_app() -> FastAPI:
     # uvicorn entry point: loads the saved dataset, makes sure a champion exists, and serves it.
