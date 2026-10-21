@@ -1,7 +1,6 @@
 import os
 import mlflow
 import pandas as pd
-from flowradar.evaluation.comparison import run_model_comparison
 _EXPERIMENT_NAME = "flowradar-model-comparison"
 _METRICS = ["mase", "smape", "interval_coverage", "min_segment_coverage", "mean_interval_width", "mean_width_mase"]
 
@@ -25,6 +24,7 @@ def tracked_model_comparison(
 ) -> pd.DataFrame:
     # runs the model comparison and logs every (model, fold) result to MLflow as a nested
     # run, per-model mean metrics on the parent run, and the full table as a CSV artifact
+    from flowradar.evaluation.comparison import run_model_comparison
     _ensure_tracking_uri_set()
     mlflow.set_experiment(_EXPERIMENT_NAME)
 

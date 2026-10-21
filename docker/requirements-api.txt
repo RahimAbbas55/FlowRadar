@@ -1,0 +1,10 @@
+numpy
+pandas
+pydantic>=2
+pyyaml
+python-dateutil
+lightgbm
+mlflow
+evidently>=0.7
+fastapi
+uvicorn
