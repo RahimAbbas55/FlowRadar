@@ -14,7 +14,7 @@ services:
     volumes:
       - flowradar-state:/state
     ports:
-      - "8000:8000"
+      - "${FLOWRADAR_DASHBOARD_PORT:-8501}:8501"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 15s

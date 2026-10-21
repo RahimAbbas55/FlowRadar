@@ -55,11 +55,19 @@ def status_banner(drift: dict) -> tuple[str, str]:
         message += " (forecast error monitor not assessed, it needs more out-of-sample history)"
     return "ok", message
 
-
 def model_caption(health: dict) -> str:
     version = health["model_version"]
     name = f"Model v{version}" if version is not None else "Model (unversioned)"
     return (
         f"{name} \u00b7 trained through {health['train_end_date']} \u00b7 "
         f"data through {health['as_of']} \u00b7 {health['horizon']}-day horizon"
+    )
+
+def snapshot_note(meta: dict) -> str:
+    # tells the viewer that the numbers are stored results, not a live model
+    built = meta.get("built_at", "an unknown date")
+    return (
+        "This deployment serves a precomputed snapshot, not a live model. Forecasts, anomaly flags and drift "
+        f"status were computed once on {built} from synthetic data (generator v{meta.get('generator_version', '?')}, "
+        f"seed {meta.get('seed', '?')}), so the controls choose between stored results."
     )

@@ -9,6 +9,7 @@ from flowradar.dashboard.frames import (
     flagged_table,
     forecast_frame,
     model_caption,
+    snapshot_note,
     status_banner,
 )
 
@@ -16,6 +17,7 @@ INTERVALS = {"80%": 0.2, "90%": 0.1, "95%": 0.05}
 SENSITIVITY = {"Strict (1%)": 0.01, "Balanced (5%)": 0.05, "Sensitive (10%)": 0.1}
 BANNERS = {"alert": st.error, "warning": st.warning, "unknown": st.info, "ok": st.success}
 DRIFT_COLUMNS = ["segment", "status", "share_drifted", "data_drift_detected", "error_ratio", "error_degraded"]
+REVIEW_WINDOWS = [7, 14, 30, 60, 90]
 st.set_page_config(page_title="FlowRadar", layout="wide")
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -27,7 +29,7 @@ def get(client, url, endpoint, **params):
     return fetch(client, url, endpoint, tuple(sorted(params.items())))
 
 client = settings.make_client()
-url = settings.api_url()
+url = settings.source_label()
 st.title("FlowRadar")
 st.caption("Cash flow forecasts, anomaly flags and drift status. All data is synthetic.")
 
@@ -38,13 +40,16 @@ except ApiError as exc:
     st.stop()
 
 st.caption(model_caption(health))
+meta = getattr(client, "meta", None)
+if callable(meta):
+    st.info(snapshot_note(meta()))
 
 with st.sidebar:
     st.header("Controls")
     segment = st.selectbox("Segment", health["segments"], key="segment")
     interval_label = st.selectbox("Forecast interval", list(INTERVALS), index=1, key="interval")
     sensitivity_label = st.selectbox("Anomaly sensitivity", list(SENSITIVITY), index=0, key="sensitivity")
-    days = st.slider("Days to review", min_value=7, max_value=90, value=30, key="days")
+    days = st.select_slider("Days to review", options=REVIEW_WINDOWS, value=30, key="days")
 
 try:
     drift = get(client, url, "drift")

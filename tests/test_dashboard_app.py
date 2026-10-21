@@ -83,13 +83,18 @@ class FakeClient:
             "reasons": ["data drift in: freelancer"] if self.retrain else [], "segments": segments,
         }
 
+class FakeSnapshotClient(FakeClient):
+    def meta(self):
+        return {"built_at": "2026-10-20", "generator_version": "0.3.0", "seed": 42}
+    
 @pytest.fixture
 def use_client(monkeypatch):
     # installs a fake client for the app and clears Streamlit's cache so tests cannot share results
-    def install(**kwargs):
-        fake = FakeClient(**kwargs)
+    def install(cls=FakeClient, **kwargs):
+        fake = cls(**kwargs)
         monkeypatch.setattr(settings, "make_client", lambda: fake)
         monkeypatch.setattr(settings, "api_url", lambda: "http://fake")
+        monkeypatch.setattr(settings, "source_label", lambda: "http://fake")
         st.cache_data.clear()
         return fake
 
@@ -171,3 +176,20 @@ def test_the_api_address_comes_from_the_environment(monkeypatch):
     assert settings.api_url() == "http://localhost:8000"
     monkeypatch.setenv("FLOWRADAR_API_URL", "http://api:9000")
     assert settings.api_url() == "http://api:9000"
+
+def test_the_review_window_choice_is_sent_to_the_api(use_client):
+    fake = use_client()
+    at = _run()
+    at.select_slider(key="days").set_value(60).run()
+    assert fake.calls[-1][0] == "anomalies"
+    assert fake.calls[-1][1]["days"] == 60
+
+def test_a_snapshot_deployment_says_so(use_client):
+    use_client(FakeSnapshotClient)
+    at = _run()
+    assert any("precomputed snapshot" in info.value for info in at.info)
+
+def test_a_live_api_deployment_shows_no_snapshot_note(use_client):
+    use_client()
+    at = _run()
+    assert not any("precomputed snapshot" in info.value for info in at.info)

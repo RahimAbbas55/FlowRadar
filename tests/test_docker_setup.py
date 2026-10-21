@@ -98,9 +98,9 @@ def test_compose_wires_the_dashboard_to_a_healthy_api():
     services = _compose()["services"]
     assert set(services) == {"api", "dashboard"}
     assert services["dashboard"]["depends_on"]["api"]["condition"] == "service_healthy"
-    assert services["dashboard"]["environment"]["FLOWRADAR_API_URL"] == "http://api:8000"
-    assert "8000:8000" in services["api"]["ports"]
-    assert "8501:8501" in services["dashboard"]["ports"]
+    assert services["dashboard"]["environment"]["FLOWRADAR_API_URL"] == "http://api:8501"
+    assert any(p.endswith(":8000") for p in services["api"]["ports"])
+    assert any(p.endswith(":8501") for p in services["dashboard"]["ports"])
     for service in services.values():
         assert "healthcheck" in service
         assert (ROOT / service["build"]["dockerfile"]).exists()

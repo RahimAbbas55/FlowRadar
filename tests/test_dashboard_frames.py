@@ -7,6 +7,7 @@ from flowradar.dashboard.frames import (
     flagged_table,
     forecast_frame,
     model_caption,
+    snapshot_note,
     status_banner,
 )
 
@@ -105,3 +106,8 @@ def test_model_caption_names_the_version_and_dates():
     health = {"model_version": 3, "train_end_date": "2024-07-03", "as_of": "2024-12-30", "horizon": 30}
     assert model_caption(health) == "Model v3 \u00b7 trained through 2024-07-03 \u00b7 data through 2024-12-30 \u00b7 30-day horizon"
     assert model_caption({**health, "model_version": None}).startswith("Model (unversioned)")
+
+def test_the_snapshot_note_says_the_results_are_precomputed():
+    note = snapshot_note({"built_at": "2026-10-20", "generator_version": "0.3.0", "seed": 42})
+    assert "precomputed snapshot" in note
+    assert "2026-10-20" in note and "seed 42" in note
